@@ -1,1 +1,453 @@
+#include <LiquidCrystal_I2C.h>
+#include <Wire.h>
+#include <HX711_ADC.h>
+#include <AccelStepper.h>
+#include <ClickEncoder.h>
+#include <TimerOne.h>
+#include <EEPROM.h>
+#include <Stepper.h>
 
+// Sección 1: Definición de constantes y variables
+
+// Definición de pines de entrada y salida
+const int PIN_MOTOR_PASOS_PULSO = 5;
+const int PIN_MOTOR_PASOS_DIRECCION = 6;
+const int PIN_ENCODER_CLK = 8;
+const int PIN_ENCODER_DT = 9;
+const int PIN_ENCODER_BTN = 10;
+const int PIN_CELDA_CARGA_DT = A0;
+const int PIN_CELDA_CARGA_SCK = A1;
+const int PIN_BOTON_EMERGENCIA = 12;
+const int PIN_BOTON_INICIO_FIN = 13;
+
+// Definición de constantes para el control del motor, celda de carga, LCD y encoder
+const int NUMERO_DE_PASOS_POR_REVOLUCION_DEL_MOTOR = 200;
+const int MICROSEGUNDOS_ENTRE_PASOS_MOTOR = 200;
+const float CALIBRACION_CELDA_DE_CARGA = -22591.0;
+const int MAX_LONGITUD_MENSAJE_LCD = 16;
+
+// Definición de variables
+bool esBotonInicioFinPresionado = false;
+bool esBotonEmergenciaPresionado = false;
+float pesoObjeto = 0.0;
+bool objetoEnMovimiento = false;
+bool direccionMovimiento = true; // true = hacia el inicio, false = hacia el final
+bool esInicioMovimiento = false;
+int posicionActual = 0;
+
+// Declaración de objetos
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+HX711_ADC celdaDeCarga;
+AccelStepper motorDePasos(AccelStepper::DRIVER, PIN_MOTOR_PASOS_PULSO, PIN_MOTOR_PASOS_DIRECCION);
+ClickEncoder encoder(PIN_ENCODER_DT, PIN_ENCODER_CLK, PIN_ENCODER_BTN, 2, true);
+Stepper stepper(NUMERO_DE_PASOS_POR_REVOLUCION_DEL_MOTOR, 8, 9, 10, 11);
+
+//Aquí empieza sección 2:
+
+// Declaración de variables y constantes
+
+const int motorPin = 9;   // Pin del motor
+const int buttonPin = 2;  // Pin del botón
+int buttonState = 0;      // Estado del botón
+int motorState = LOW;     // Estado del motor
+
+void setup() {
+  pinMode(motorPin, OUTPUT);
+  pinMode(buttonPin, INPUT);
+}
+
+void loop() {
+  buttonState = digitalRead(buttonPin);
+
+  if (buttonState == HIGH) {
+    if (motorState == LOW) {
+      motorState = HIGH;
+      digitalWrite(motorPin, motorState);
+    }
+    else {
+      motorState = LOW;
+      digitalWrite(motorPin, motorState);
+    }
+    delay(1000);
+  }
+}
+// Sección 3: Funciones auxiliares
+
+// Función para mostrar un mensaje en el LCD
+void mostrarMensajeLCD(String mensaje, int fila = 0) {
+  lcd.setCursor(0, fila);
+  lcd.print(mensaje);
+  for (int i = mensaje.length(); i < MAX_LONGITUD_MENSAJE_LCD; i++) {
+    lcd.print(" ");
+  }
+}
+
+// Función para leer el valor de la celda de carga
+float leerCeldaDeCarga() {
+  float valor = celdaDeCarga.getData();
+  valor = valor / CALIBRACION_CELDA_DE_CARGA;
+  return valor;
+}
+
+// Función para mover el motor un paso en la dirección indicada por la variable "direccionMovimiento"
+void moverMotorUnPaso() {
+  if (direccionMovimiento) {
+    motorDePasos.setAcceleration(200);
+    motorDePasos.move(-1);
+    motorDePasos.run();
+  }
+  else {
+    motorDePasos.setAcceleration(200);
+    motorDePasos.move(1);
+    motorDePasos.run();
+  }
+}
+
+// Función para mover el motor hacia el inicio (posición 0)
+void moverMotorAlInicio() {
+  while (!esBotonInicioFinPresionado && posicionActual > 0) {
+    objetoEnMovimiento = true;
+    moverMotorUnPaso();
+    posicionActual--;
+    mostrarMensajeLCD("Moviendo: " + String(posicionActual) + " ", 1);
+  }
+  esInicioMovimiento = false;
+  objetoEnMovimiento = false;
+}
+
+// Función para mover el motor hacia el final (posición máxima)
+void moverMotorAlFinal() {
+  while (!esBotonInicioFinPresionado && posicionActual < 100) {
+    objetoEnMovimiento = true;
+    moverMotorUnPaso();
+    posicionActual++;
+    mostrarMensajeLCD("Moviendo: " + String(posicionActual) + " ", 1);
+  }
+  esInicioMovimiento = true;
+  objetoEnMovimiento = false;
+}
+
+// Función para detener el motor
+void detenerMotor() {
+  motorDePasos.setAcceleration(200);
+  motorDePasos.moveTo(motorDePasos.currentPosition());
+  motorDePasos.runToPosition();
+}
+
+// Función para leer y procesar los eventos del encoder
+void procesarEncoder() {
+  encoder.service();
+  int16_t delta = encoder.getValue();
+  if (delta != 0) {
+    if (delta > 0 && posicionActual < 100) {
+      posicionActual++;
+      mostrarMensajeLCD("Moviendo: " + String(posicionActual) + " ", 1);
+      direccionMovimiento = false;
+      objetoEnMovimiento = true;
+    }
+    else if (delta < 0 && posicionActual > 0) {
+      posicionActual--;
+      mostrarMensajeLCD("Moviendo: " + String(posicionActual) + " ", 1);
+      direccionMovimiento = true;
+      objetoEnMovimiento = true;
+    }
+  }
+  if (encoder.getButton()) {
+    esBotonInicioFinPresionado = true;
+  }
+}
+
+// Función para leer y procesar el estado de los botones de inicio/fin y de emergencia
+void procesarBotones() {
+  if (digitalRead(PIN_BOTON_INICIO_FIN) == HIGH) {
+    esBotonInicioFinPresionado = true
+                                 // Sección 3: Funciones auxiliares (continuación)
+
+                                 // Función para leer el peso del objeto en la celda de carga
+    void leerPesoObjeto() {
+      float peso = leerCeldaDeCarga();
+      if (peso > 0.05) {
+        pesoObjeto = peso;
+        mostrarMensajeLCD("Peso: " + String(pesoObjeto) + " g", 0);
+      }
+      else {
+        pesoObjeto = 0.0;
+        mostrarMensajeLCD("Sin objeto", 0);
+      }
+    }
+
+    // Función para leer la posición del encoder y actualizar la variable "direccionMovimiento"
+    void leerEncoder() {
+      int valor = encoder.getValue();
+      if (valor > 0) {
+        direccionMovimiento = false;
+      }
+      else if (valor < 0) {
+        direccionMovimiento = true;
+      }
+      encoder.clear();
+    }
+
+    // Sección 4: Función principal
+
+    void loop() {
+      // Verificar si el botón de inicio/fin está presionado
+      if (digitalRead(PIN_BOTON_INICIO_FIN) == HIGH) {
+        esBotonInicioFinPresionado = true;
+        mostrarMensajeLCD("Presione el", 0);
+        mostrarMensajeLCD("boton de nuevo", 1);
+      }
+
+      // Verificar si el botón de emergencia está presionado
+      if (digitalRead(PIN_BOTON_EMERGENCIA) == HIGH) {
+        esBotonEmergenciaPresionado = true;
+        mostrarMensajeLCD("Emergencia!", 0);
+        mostrarMensajeLCD("Deteniendo motor", 1);
+        detenerMotor();
+      }
+
+      // Leer el peso del objeto en la celda de carga
+      leerPesoObjeto();
+
+      // Leer la posición del encoder y actualizar la variable "direccionMovimiento"
+      leerEncoder();
+
+      // Mover el motor si es necesario
+      if (direccionMovimiento && !esInicioMovimiento && !esBotonInicioFinPresionado) {
+        objetoEnMovimiento = true;
+        moverMotorUnPaso();
+        posicionActual--;
+        mostrarMensajeLCD("Moviendo: " + String(posicionActual) + " ", 1);
+      }
+      else if (!direccionMovimiento && !esBotonInicioFinPresionado) {
+        objetoEnMovimiento = true;
+        moverMotorUnPaso();
+        posicionActual++;
+        mostrarMensajeLCD("Moviendo: " + String(posicionActual) + " ", 1);
+      }
+
+      // Verificar si se llegó al inicio o al final y detener el motor
+      if ((posicionActual <= 0 && direccionMovimiento) || (posicionActual >= 100 && !direccionMovimiento)) {
+        detenerMotor();
+      }
+
+      // Verificar si se presionó el botón de inicio/fin y mover el motor a la posición correspondiente
+      if (esBotonInicioFinPresionado) {
+        if (direccionMovimiento) {
+          moverMotorAlInicio();
+        }
+        else {
+          moverMotorAlFinal();
+        }
+      }
+
+      // Verificar si se presionó el botón de emergencia y detener el motor
+      if (esBotonEmergenciaPresionado) {
+        detenerMotor();
+        while (digitalRead(PIN_BOTON_EMERGENCIA) == HIGH) {
+          // Esperar a que se libere el botón de emergencia
+        }
+        esBotonEmergenciaPresionado = false;
+      }
+
+      // Actualizar el LCD
+      delay(10);
+    }
+    // Sección 4: Funciones de interrupción
+
+    // Función de interrupción para el encoder
+    void onEncoderRotated() {
+      long valor = encoder.getValue();
+      if (valor > 0) {
+        if (esInicioMovimiento) {
+          esBotonInicioFinPresionado = true;
+          mostrarMensajeLCD("Detener motor", 1);
+        }
+        else {
+          esBotonInicioFinPresionado = true;
+          mostrarMensajeLCD("Mover al inicio", 1);
+        }
+      }
+      else if (valor < 0) {
+        esBotonInicioFinPresionado = true;
+        mostrarMensajeLCD("Mover al final", 1);
+      }
+    }
+
+    // Función de interrupción para el botón de inicio/fin
+    void onBotonInicioFinPressed() {
+      if (esBotonInicioFinPresionado) {
+        esBotonInicioFinPresionado = false;
+        if (esInicioMovimiento) {
+          detenerMotor();
+        }
+        else {
+          if (posicionActual == 0) {
+            mostrarMensajeLCD("Ya está en el inicio", 1);
+          }
+          else {
+            moverMotorAlInicio();
+          }
+        }
+      }
+    }
+
+    // Función de interrupción para el botón de emergencia
+    void onBotonEmergenciaPressed() {
+      esBotonEmergenciaPresionado = true;
+      mostrarMensajeLCD("Detener emergencia", 1);
+    }
+
+    // Función de interrupción para el temporizador
+    void onTimer() {
+      if (!esBotonEmergenciaPresionado) {
+        float nuevoPeso = leerCeldaDeCarga();
+        if (nuevoPeso > pesoObjeto + 0.01 || nuevoPeso < pesoObjeto - 0.01) {
+          pesoObjeto = nuevoPeso;
+          if (pesoObjeto < 0.0) {
+            pesoObjeto = 0.0;
+          }
+          mostrarMensajeLCD("Peso: " + String(pesoObjeto) + " g");
+        }
+      }
+      else {
+        detenerMotor();
+        mostrarMensajeLCD("EMERGENCIA", 1);
+      }
+    }
+
+    // Sección 5: Configuración del hardware y la lógica
+
+    void setup() {
+      // Inicialización de pines
+      pinMode(PIN_BOTON_EMERGENCIA, INPUT_PULLUP);
+      pinMode(PIN_BOTON_INICIO_FIN, INPUT_PULLUP);
+
+      // Inicialización de objetos
+      lcd.init();
+      lcd.backlight();
+
+      celdaDeCarga.begin(PIN_CELDA_CARGA_DT, PIN_CELDA_CARGA_SCK);
+      celdaDeCarga.start(200);
+
+      motorDePasos.setMaxSpeed(1000);
+      motorDePasos.setSpeed(500);
+
+      encoder.setAccelerationEnabled(true);
+      encoder.setAcceleration(1000);
+      encoder.setDoubleClickEnabled(true);
+
+      // Configuración de interrupciones
+      attachInterrupt(digitalPinToInterrupt(PIN_ENCODER_DT), onEncoderRotated, CHANGE);
+      attachInterrupt(digitalPinToInterrupt(PIN_BOTON_INICIO_FIN), onBotonInicioFinPressed, FALLING);
+      attachInterrupt(digitalPinToInterrupt(PIN_BOTON_EMERGENCIA), onBotonEmergenciaPressed, FALLING);
+      Timer1.initialize(100000); // Temporizador de 100 ms
+      Timer1.attachInterrupt(onTimer);
+    }
+
+    void loop() {
+      if (!objetoEnMovimiento) {
+        long valor = encoder.getValue();
+        if (valor > 0) {
+          esBotonInicioFinPresionado = true
+                                       // Sección 5: Funciones para mover el objeto de un punto a otro
+
+                                       // Función para mover el objeto a la posición de inicio
+          void moverObjetoAlInicio() {
+            mostrarMensajeLCD("Yendo al inicio...", 1);
+            delay(500);
+            moverMotorAlInicio();
+            delay(500);
+            mostrarMensajeLCD("Objeto en inicio ", 1);
+            delay(500);
+          }
+
+          // Función para mover el objeto a la posición final
+          void moverObjetoAlFinal() {
+            mostrarMensajeLCD("Yendo al final...", 1);
+            delay(500);
+            moverMotorAlFinal();
+            delay(500);
+            mostrarMensajeLCD("Objeto en final ", 1);
+            delay(500);
+          }
+
+          // Función para mover el objeto a una posición intermedia
+          void moverObjetoA(int posicion) {
+            if (posicion < 0 || posicion > 100) {
+              mostrarMensajeLCD("Posicion invalida ", 1);
+              delay(1000);
+              mostrarMensajeLCD(" ", 1);
+              return;
+            }
+            if (posicion < posicionActual) {
+              direccionMovimiento = true;
+            }
+            else {
+              direccionMovimiento = false;
+            }
+            mostrarMensajeLCD("Yendo a posicion " + String(posicion) + "...", 1);
+            delay(500);
+            while (!esBotonInicioFinPresionado && posicion != posicionActual) {
+              objetoEnMovimiento = true;
+              moverMotorUnPaso();
+              if (direccionMovimiento) {
+                posicionActual--;
+              }
+              else {
+                posicionActual++;
+              }
+              mostrarMensajeLCD("Moviendo: " + String(posicionActual) + " ", 1);
+            }
+            objetoEnMovimiento = false;
+            delay(500);
+            mostrarMensajeLCD("Objeto en " + String(posicionActual) + " ", 1);
+            delay(500);
+          }
+
+          // Sección 6: Función principal
+
+          void loop() {
+            encoder.service();
+            if (encoder.getButton()) {
+              if (!esBotonEmergenciaPresionado) {
+                if (objetoEnMovimiento) {
+                  detenerMotor();
+                  objetoEnMovimiento = false;
+                }
+                else {
+                  if (esBotonInicioFinPresionado) {
+                    esBotonInicioFinPresionado = false;
+                    mostrarMensajeLCD(" ", 1);
+                  }
+                  else {
+                    esBotonInicioFinPresionado = true;
+                    mostrarMensajeLCD("Presione de nuevo para", 1);
+                    mostrarMensajeLCD("continuar ", 0);
+                  }
+                }
+                delay(500);
+              }
+            }
+            else {
+              if (esBotonInicioFinPresionado) {
+                esBotonInicioFinPresionado = false;
+                mostrarMensajeLCD(" ", 1);
+              }
+              int16_t encoderValue = encoder.getValue();
+              if (encoderValue != 0) {
+                if (!objetoEnMovimiento) {
+                  if (encoderValue < 0) {
+                    moverObjetoAlInicio();
+                  }
+                  else {
+                    moverObjetoAlFinal();
+                  }
+                }
+                else {
+                  int nuevaPosicion = posicionActual + encoderValue;
+                  moverObjetoA(nuevaPosicion);
+                }
+              }
+            }
+          }
